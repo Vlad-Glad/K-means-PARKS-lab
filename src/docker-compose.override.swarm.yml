@@ -1,0 +1,40 @@
+version: '3.4'
+
+services:
+  parcs.daemon:
+    environment:
+      - Daemons__PreconfiguredInstances__0__HostUrl=src-parcs.daemon-1
+      - Daemons__PreconfiguredInstances__0__Port=1111
+      - Daemons__PreconfiguredInstances__1__HostUrl=src-parcs.daemon-2
+      - Daemons__PreconfiguredInstances__1__Port=1111
+      - HostApi__Uri=src-parcs.hostapi
+    deploy:
+      mode: replicated
+      replicas: 2
+
+  parcs.hostapi:
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=https://+:443;http://+:80
+      - Daemons__PreconfiguredInstances__0__HostUrl=src-parcs.daemon-1
+      - Daemons__PreconfiguredInstances__0__Port=1111
+      - Daemons__PreconfiguredInstances__1__HostUrl=src-parcs.daemon-2
+      - Daemons__PreconfiguredInstances__1__Port=1111
+      - Database__HostName=parcs.database
+      - Database__DatabaseName=parcs
+      - Database__Username=parcs_admin
+      - Database__Password=p5sAuuhrSxs9GHxD
+      - Database__Port=5432
+    ports:
+      - "5000:80"
+      - "5001:443"
+    volumes:
+      - ${APPDATA}/Microsoft/UserSecrets:/root/.microsoft/usersecrets:ro
+      - ${APPDATA}/ASP.NET/Https:/root/.aspnet/https:ro
+
+  parcs.database:
+    ports:
+    - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres

@@ -1,0 +1,212 @@
+using System.Diagnostics;
+using System.Text;
+using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using Parcs.Agent.Runtime;
+using Parcs.Modules.AgentRunner.Models;
+using Parcs.Net;
+
+namespace Parcs.Modules.AgentRunner;
+
+/// <summary>
+/// Main (host-side) module for agent-driven parallel computation.
+///
+/// Protocol:
+///   Input files expected in the job input directory:
+///     - agent_computation.dll   — compiled user assembly (implements IAgentComputation)
+///     - layer_input.json        — JSON-serialised LayerInputDto
+///
+///   Module argument:
+///     - PointsNumber            — number of daemon workers to spawn (= layer parallelism)
+///
+///   Steps:
+///   1. Read agent assembly bytes and LayerInputDto from input files.
+///   2. Batch-create all daemon points (all Service Bus messages published at once so
+///      KEDA sees full queue depth immediately).
+///   3. Launch worker modules on every point (ExecuteClassAsync BEFORE any data writes).
+///   4. Send assembly bytes + worker-specific AgentLayerInput to each worker.
+///   5. Collect WorkerResult from every worker concurrently. Partial failure is tolerated
+///      unless FailFast is set, in which case the first failed worker fails the job.
+///   6. Write agent_results.json (LayerOutputDto) to job output.
+/// </summary>
+public sealed class AgentRunnerMainModule : IModule
+{
+    // camelCase so agent_results.json matches every other payload the MCP server returns
+    // (the tool responses, and this same JSON fed back as PreviousLayerResultJson). Compact,
+    // because the document is re-sent to every worker of the next layer.
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    };
+
+    public async Task RunAsync(IModuleInfo moduleInfo, CancellationToken cancellationToken = default)
+    {
+        var stopwatch = Stopwatch.StartNew();
+
+        // --- Step 1: read layer input (assembly stays on NFS; workers read it directly) ---
+        var layerInputJson = Encoding.UTF8.GetString(ReadInputFile(moduleInfo, "layer_input.json"));
+        var layerInput = JsonSerializer.Deserialize<LayerInputDto>(layerInputJson)
+            ?? throw new InvalidOperationException("Failed to deserialise layer_input.json");
+
+        // Prefer TotalWorkers from layer_input.json (set by run_layer parallelism parameter);
+        // fall back to PointsNumber from job arguments for backwards compatibility.
+        var options = moduleInfo.BindModuleOptions<AgentRunnerOptions>();
+        var pointsCount = layerInput.TotalWorkers > 0 ? layerInput.TotalWorkers : options.PointsNumber;
+
+        moduleInfo.Logger.LogInformation(
+            "AgentRunner starting: session={Session} layer={Layer} workers={Workers}",
+            layerInput.SessionId, layerInput.LayerId, pointsCount);
+
+        // --- Step 2: batch-create all points ---
+        var points = await moduleInfo.CreatePointsAsync(pointsCount);
+        var channels = new IChannel[pointsCount];
+        for (int i = 0; i < pointsCount; i++)
+        {
+            channels[i] = await points[i].CreateChannelAsync();
+        }
+
+        // --- Step 3: launch worker modules (MUST precede any data writes) ---
+        foreach (var point in points)
+        {
+            await point.ExecuteClassAsync<AgentRunnerWorkerModule>();
+        }
+
+        moduleInfo.Logger.LogInformation("All {Count} worker modules launched", pointsCount);
+
+        // --- Step 4: send per-worker index only ---
+        // Assembly bytes and layer_input.json are on the shared NFS mount at
+        // /var/lib/storage/Jobs/{jobId}/Input/ — workers read them directly via InputReader.
+        // The points beyond the workers are the spawn budget, split evenly; each worker hands its
+        // share down to the points it spawns.
+        var spare = Math.Max(0, layerInput.MaxPoints - pointsCount);
+        for (int i = 0; i < pointsCount; i++)
+        {
+            await channels[i].WriteObjectAsync(new WorkerHandshake
+            {
+                WorkerIndex = i,
+                MaxDepth    = spare > 0 ? layerInput.MaxDepth : 0,
+                SpawnBudget = spare / pointsCount + (i < spare % pointsCount ? 1 : 0),
+            });
+        }
+
+        // --- Step 4b: relay every worker's endpoint; workers open peer channels themselves, on demand ---
+        await SendDirectoryAsync(moduleInfo, channels);
+
+        // --- Step 5: collect results concurrently, so a failure is seen as soon as it happens ---
+        var pending = Enumerable.Range(0, pointsCount)
+            .Select(i => ReadWorkerResultAsync(moduleInfo, channels[i], i))
+            .ToList();
+        var results = new List<WorkerResult>(pointsCount);
+
+        while (pending.Count > 0)
+        {
+            var finished = await Task.WhenAny(pending);
+            pending.Remove(finished);
+            var result = await finished;
+            results.Add(result);
+
+            if (!result.Success && layerInput.FailFast)
+            {
+                // Throwing fails the job; the host cancels it, which releases the other points.
+                throw new InvalidOperationException(
+                    $"Worker {result.WorkerIndex} failed (failFast): {result.ErrorMessage}");
+            }
+        }
+
+        // Every worker has returned, so none still reads: peer channels may close.
+        foreach (var channel in channels)
+        {
+            try { await channel.WriteObjectAsync(new WorkerRelease()); } catch { /* the worker is gone */ }
+        }
+
+        results.Sort((a, b) => a.WorkerIndex.CompareTo(b.WorkerIndex));
+        var peerChannels = results.Sum(r => r.Peers.Count(p => p > r.WorkerIndex));
+        stopwatch.Stop();
+
+        // --- Step 6: write output ---
+        var output = new LayerOutputDto
+        {
+            SessionId          = layerInput.SessionId,
+            LayerId            = layerInput.LayerId,
+            Results            = results,
+            TotalElapsedSeconds = stopwatch.Elapsed.TotalSeconds,
+        };
+
+        var outputJson = JsonSerializer.Serialize(output, JsonOpts);
+        await moduleInfo.OutputWriter.WriteToFileAsync(
+            Encoding.UTF8.GetBytes(outputJson), "agent_results.json");
+
+        moduleInfo.Logger.LogInformation(
+            "AgentRunner completed in {Elapsed:F2}s — {Success}/{Total} workers succeeded, {PeerChannels} peer channels",
+            stopwatch.Elapsed.TotalSeconds, results.Count(r => r.Success), pointsCount, peerChannels);
+
+        // Cleanup
+        foreach (var point in points)
+        {
+            try { await point.DeleteAsync(); } catch { /* best-effort */ }
+        }
+        foreach (var channel in channels)
+        {
+            try { channel.Dispose(); } catch { /* best-effort */ }
+        }
+    }
+
+    /// <summary>
+    /// Reads every worker's endpoint and sends all of them to every worker. A worker that could
+    /// not open one (or did not answer) gets a null entry: only channels to it fail.
+    /// </summary>
+    private static async Task SendDirectoryAsync(IModuleInfo moduleInfo, IChannel[] channels)
+    {
+        var endpoints = await Task.WhenAll(channels.Select(async (c, i) =>
+        {
+            try
+            {
+                return await c.ReadObjectAsync<WorkerEndpoint>();
+            }
+            catch (Exception ex)
+            {
+                return new WorkerEndpoint { WorkerIndex = i, Error = ex.Message };
+            }
+        }));
+
+        foreach (var failed in endpoints.Where(e => e.Address is null))
+        {
+            moduleInfo.Logger.LogWarning("Worker {Index} has no peer endpoint: {Error}", failed.WorkerIndex, failed.Error);
+        }
+
+        var directory = new WorkerDirectory { Addresses = [.. endpoints.Select(e => e.Address)] };
+        foreach (var channel in channels)
+        {
+            try { await channel.WriteObjectAsync(directory); } catch { /* reported when its result is read */ }
+        }
+    }
+
+    private static async Task<WorkerResult> ReadWorkerResultAsync(IModuleInfo moduleInfo, IChannel channel, int index)
+    {
+        try
+        {
+            var result = await channel.ReadObjectAsync<WorkerResult>();
+            moduleInfo.Logger.LogInformation(
+                "Worker {Index} finished — success={Success}", index, result.Success);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            moduleInfo.Logger.LogWarning(ex, "Worker {Index} failed to return a result: {Msg}", index, ex.Message);
+            return new WorkerResult
+            {
+                WorkerIndex  = index,
+                Success      = false,
+                ErrorMessage = $"Communication error: {ex.Message}",
+            };
+        }
+    }
+
+    private static byte[] ReadInputFile(IModuleInfo moduleInfo, string filename)
+    {
+        using var stream = moduleInfo.InputReader.GetFileStreamForFile(filename);
+        using var ms = new MemoryStream();
+        stream.CopyTo(ms);
+        return ms.ToArray();
+    }
+}

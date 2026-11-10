@@ -1,0 +1,14 @@
+{
+  "profiles": {
+    "Parcs.Daemon": {
+      "commandName": "Project"
+    },
+    "Docker": {
+      "commandName": "Docker"
+    },
+    "Bridge to Kubernetes": {
+      "commandName": "AzureDevSpacesLocal",
+      "launchBrowser": true
+    }
+  }
+}

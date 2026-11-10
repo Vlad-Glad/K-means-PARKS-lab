@@ -1,0 +1,43 @@
+using Parcs.Host.Extensions;
+using Parcs.Core.Services;
+using Parcs.Core.Services.Interfaces;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// SynchronousJobRuns blocks until all KEDA daemon pods complete — extend timeouts.
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.KeepAliveTimeout    = TimeSpan.FromMinutes(15);
+    options.Limits.RequestHeadersTimeout = TimeSpan.FromMinutes(1);
+});
+
+builder.Host.AddElasticSearchLogging(builder.Configuration);
+builder.Services.AddApiControllers();
+builder.Services.AddValidation();
+builder.Services.AddProblemDetails();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+builder.Services.AddHealthChecks();
+
+builder.Services.AddApplicationServices();
+builder.Services.AddApplicationOptions(builder.Configuration);
+builder.Services.AddAsynchronousJobProcessing();
+// Daemons provisioned through the point queue dial back here.
+builder.Services.AddSingleton<CallbackTcpServer>();
+builder.Services.AddSingleton<IPeerChannelService, PeerChannelService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<CallbackTcpServer>());
+builder.Services.AddHttpClient();
+builder.Services.AddDatabase(builder.Configuration);
+var app = builder.Build();
+
+app.MigrateDatabase();
+
+app.UseSwagger();
+app.UseSwaggerUI();
+
+app.UseGlobalExceptionHandler();
+app.UseAuthorization();
+app.MapControllers();
+app.MapHealthChecks("health");
+
+app.Run();

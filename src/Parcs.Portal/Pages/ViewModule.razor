@@ -1,0 +1,13 @@
+﻿@page "/module/{Id:long}"
+@inherits ViewModuleBase
+
+<Title value="PARCS | Module"></Title>
+
+@if (IsLoading)
+{
+    <div class="spinner"></div>
+}
+else
+{
+    <ModuleInfo Module="Module"></ModuleInfo>
+}

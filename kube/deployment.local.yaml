@@ -1,0 +1,495 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: parcs-storage-volume
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /mnt/data/storage
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: parcs-database-volume
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /mnt/data/database
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: parcs-elastic-volume
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /mnt/data/elastic
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: parcs-storage-volume-claim
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  selector:
+    matchLabels:
+      app: parcs
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: parcs-database-volume-claim
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  selector:
+    matchLabels:
+      app: parcs
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: parcs-elastic-volume-claim
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  selector:
+    matchLabels:
+      app: parcs
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: parcs-daemon-headless
+  labels:
+    app: parcs-daemon
+spec:
+  ports:
+  - name: daemon
+    port: 1111
+    targetPort: 1111
+  selector:
+    app: parcs-daemon
+  clusterIP: None
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: parcs-daemon
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: parcs-daemon
+  template:
+    metadata:
+      labels:
+        app: parcs-daemon
+    spec:
+      dnsPolicy: ClusterFirst
+      containers:
+      - name: parcs-daemon
+        image: oleksiibohusevych/parcsdaemon
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 1111
+        resources:
+          limits:
+            cpu: 500m
+            memory: 1024Mi
+          requests:
+            cpu: 100m
+            memory: 256Mi
+        volumeMounts:
+        - name: parcs-storage-volume
+          mountPath: /var/lib/storage
+        env:
+        - name: Hosting__Environment
+          value: Kubernetes
+        - name: Kubernetes__NamespaceName
+          value: Default
+        - name: Kubernetes__DaemonsHeadlessServiceName
+          value: parcs-daemon-headless
+        - name: HostApi__Uri
+          value: parcs-hostapi-internal
+        - name: Elasticsearch__BaseUrl
+          value: http://elasticsearch:9200
+      volumes:
+      - name: parcs-storage-volume
+        persistentVolumeClaim:
+          claimName: parcs-storage-volume-claim
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch
+  labels:
+    app: elasticsearch
+spec:
+  ports:
+  - name: http
+    port: 9200
+    targetPort: 9200
+  selector:
+    app: elasticsearch
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elasticsearch
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: elasticsearch
+  template:
+    metadata:
+      labels:
+        app: elasticsearch
+    spec:
+      containers:
+      - name: elasticsearch
+        image: elasticsearch:8.15.0
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 9200
+        env:
+        - name: discovery.type
+          value: single-node
+        - name: xpack.security.enabled
+          value: "false"
+        volumeMounts:
+        - name: elasticsearch-data-volume
+          mountPath: /usr/share/elasticsearch/data
+      volumes:
+      - name: elasticsearch-data-volume
+        persistentVolumeClaim:
+          claimName: elasticsearch-data-volume-claim
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kibana
+  labels:
+    app: kibana
+spec:
+  type: LoadBalancer
+  ports:
+  - name: http
+    port: 5601
+    targetPort: 5601
+  selector:
+    app: kibana
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kibana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kibana
+  template:
+    metadata:
+      labels:
+        app: kibana
+    spec:
+      containers:
+      - name: kibana
+        image: kibana:8.15.0
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 5601
+        env:
+        - name: ELASTICSEARCH_URL
+          value: http://elasticsearch:9200
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: parcs-hostapi
+  labels:
+    app: parcs-hostapi
+spec:
+  type: NodePort
+  ports:
+  - name: https
+    port: 443
+    targetPort: 80
+  selector:
+    app: parcs-hostapi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: parcs-hostapi-internal
+  labels:
+    app: parcs-hostapi
+spec:
+  ports:
+  - name: https
+    port: 443
+    targetPort: 443
+  - name: http
+    port: 80
+    targetPort: 80
+  selector:
+    app: parcs-hostapi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: parcs-hostapi
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: parcs-hostapi
+  template:
+    metadata:
+      labels:
+        app: parcs-hostapi
+    spec:
+      dnsPolicy: ClusterFirst
+      containers:
+      - name: parcs-hostapi
+        image: oleksiibohusevych/parcshost
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 80
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        env:
+        - name: Hosting__Environment
+          value: Kubernetes
+        - name: Kubernetes__NamespaceName
+          value: Default
+        - name: Kubernetes__DaemonsHeadlessServiceName
+          value: parcs-daemon-headless
+        - name: Database__HostName
+          value: parcs-database
+        - name: Database__DatabaseName
+          value: parcs
+        - name: Database__Username
+          value: parcs_admin
+        - name: Database__Password
+          value: p5sAuuhrSxs9GHxD
+        - name: Database__Port
+          value: '5432'
+        - name: Elasticsearch__BaseUrl
+          value: http://elasticsearch:9200
+        volumeMounts:
+        - name: parcs-storage-volume
+          mountPath: /var/lib/storage
+      volumes:
+      - name: parcs-storage-volume
+        persistentVolumeClaim:
+          claimName: parcs-storage-volume-claim
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: parcs-portal
+  labels:
+    app: parcs-portal
+spec:
+  type: LoadBalancer
+  ports:
+  - name: https
+    port: 443
+    targetPort: 443
+  - name: http
+    port: 80
+    targetPort: 80
+  selector:
+    app: parcs-portal
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: parcs-portal
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: parcs-portal
+  template:
+    metadata:
+      labels:
+        app: parcs-portal
+    spec:
+      containers:
+      - name: parcs-portal
+        image: oleksiibohusevych/parcsportal
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 80
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        env:
+        - name: Host__Uri
+          value: parcs-hostapi-internal
+        - name: Portal__Uri
+          value: parcs-portal
+        - name: Portal__SignalrUri
+          value: parcs-portal
+        - name: Elasticsearch__BaseUrl
+          value: http://elasticsearch:9200
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: parcs-database
+  labels:
+    app: parcs-database
+spec:
+  selector:
+    app: parcs-database
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: parcs-database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: parcs-database
+  template:
+    metadata:
+      labels:
+        app: parcs-database
+    spec:
+      containers:
+      - name: parcs-database
+        image: postgres:latest
+        imagePullPolicy: Always
+        env:
+        - name: POSTGRES_USER
+          value: parcs_admin
+        - name: POSTGRES_PASSWORD
+          value: p5sAuuhrSxs9GHxD
+        - name: POSTGRES_DB
+          value: parcs
+        ports:
+        - containerPort: 5432
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        volumeMounts:
+        - name: parcs-database-volume
+          mountPath: /var/lib/postgresql/data
+      volumes:
+      - name: parcs-database-volume
+        persistentVolumeClaim:
+          claimName: parcs-database-volume-claim
+---
+# ═══════════════════════════════════════════════════════════════════════════════
+# PARCS Agent MCP server — static mode: layers run on the parcs-daemon pool above, nothing is
+# provisioned, so agent experiments need no cloud resources. Scale the pool for more workers:
+#   kubectl scale deployment parcs-daemon --replicas=4
+# Build the image locally first (from the repo root):
+#   docker build -f src/Parcs.Agent.Mcp/Dockerfile -t parcs-agent-mcp:local .
+# MCP endpoint (Streamable HTTP): http://<node-ip>:30808/
+# ═══════════════════════════════════════════════════════════════════════════════
+apiVersion: v1
+kind: Service
+metadata:
+  name: parcs-agent-mcp
+  labels:
+    app: parcs-agent-mcp
+spec:
+  type: NodePort
+  selector:
+    app: parcs-agent-mcp
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    nodePort: 30808
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: parcs-agent-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: parcs-agent-mcp
+  template:
+    metadata:
+      labels:
+        app: parcs-agent-mcp
+    spec:
+      containers:
+      - name: parcs-agent-mcp
+        image: parcs-agent-mcp:local
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: ASPNETCORE_URLS
+          value: "http://+:8080"
+        - name: Parcs__HostUrl
+          value: "http://parcs-hostapi-internal"
+        - name: Parcs__CallbackUrl
+          value: "http://parcs-agent-mcp:8080/noop"
+        - name: Scaling__Mode
+          value: Static
+        - name: Kubernetes__DaemonsHeadlessServiceName
+          value: parcs-daemon-headless
+        - name: Kubernetes__NamespaceName
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 256Mi
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          periodSeconds: 10

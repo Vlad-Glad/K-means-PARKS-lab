@@ -1,0 +1,91 @@
+version: '3.4'
+
+services:
+  parcs.daemon:
+    image: ${DOCKER_REGISTRY-}parcsdaemon
+    build:
+      context: .
+      dockerfile: Parcs.Daemon/Dockerfile
+    volumes:
+      - type: volume
+        source: parcs.storage
+        target: /var/lib/storage
+    networks:
+      - parcsnet
+    depends_on:
+      parcs.hostapi:
+        condition: service_started
+      elasticsearch:
+        condition: service_healthy
+
+  parcs.hostapi:
+    image: ${DOCKER_REGISTRY-}parcshostapi
+    build:
+      context: .
+      dockerfile: Parcs.Host/Dockerfile
+    volumes:
+      - type: volume
+        source: parcs.storage
+        target: /var/lib/storage
+    networks:
+      - parcsnet
+    depends_on:
+      parcs.database:
+        condition: service_started
+      elasticsearch:
+        condition: service_healthy
+
+  parcs.portal:
+    image: ${DOCKER_REGISTRY-}parcsportal
+    build:
+      context: .
+      dockerfile: Parcs.Portal/Dockerfile
+    networks:
+      - parcsnet
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  parcs.database:
+    image: postgres:latest
+    restart: always
+    volumes:
+      - parcs.database:/var/lib/postgresql/data/
+      - ./create-db.sql:/docker-entrypoint-initdb.d/database-init.sql
+    networks:
+      - parcsnet
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  elasticsearch:
+    container_name: elastic
+    image: elasticsearch:8.15.0
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    networks:
+      - parcsnet
+    healthcheck: 
+      test: ["CMD", "curl", "-f", "http://localhost:9200"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  kibana:
+    container_name: kibana
+    image: kibana:8.15.0
+    depends_on:
+      - elasticsearch
+    networks:
+      - parcsnet
+
+volumes:
+  parcs.database:
+  parcs.storage:
+  elasticsearch-data:
+
+networks:
+  parcsnet:
+    driver: bridge

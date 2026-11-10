@@ -1,0 +1,243 @@
+namespace Parcs.Modules.TravelingSalesman.Models
+{
+    public class GeneticAlgorithm
+    {
+        private List<Route> _population;
+        private readonly List<City> _cities;
+        private readonly ModuleOptions _options;
+        private readonly Random _random;
+        private readonly List<double> _convergenceHistory = new();
+        private readonly MigrationManager? _migrationManager;
+        private readonly bool _enableMigration;
+
+        public GeneticAlgorithm(List<City> cities, ModuleOptions options)
+        {
+            _cities = cities ?? throw new ArgumentNullException(nameof(cities));
+            _options = options ?? throw new ArgumentNullException(nameof(options));
+            _random = new Random(options.Seed);
+            _convergenceHistory = new List<double>();
+            _population = new List<Route>(); // Initialize population
+        }
+
+        public void Initialize()
+        {
+            _population.Clear();
+            
+            for (int i = 0; i < _options.PopulationSize; i++)
+            {
+                var route = new Route(_cities, _random);
+                _population.Add(route);
+            }
+        }
+
+        public void Evolve()
+        {
+            if (_population == null || _population.Count == 0)
+            {
+                throw new InvalidOperationException("Population must be initialized before evolving. Call Initialize() first.");
+            }
+            
+            var newPopulation = new List<Route>();
+            
+            // Elitism: keep the best individual to ensure no regression
+            var bestRoute = GetBestRoute();
+            newPopulation.Add(bestRoute);
+            
+            while (newPopulation.Count < _options.PopulationSize)
+            {
+                var parent1 = Select();
+                var parent2 = Select();
+                
+                Route offspring;
+                if (_random.NextDouble() < _options.CrossoverRate)
+                {
+                    offspring = parent1.Crossover(parent2);
+                }
+                else
+                {
+                    offspring = new Route(parent1);
+                }
+                
+                if (_random.NextDouble() < _options.MutationRate)
+                {
+                    offspring.Mutate();
+                }
+                
+                newPopulation.Add(offspring);
+            }
+            
+            _population = newPopulation;
+        }
+
+        private Route Select()
+        {
+            const int tournamentSize = 3;
+            var tournament = new List<Route>();
+            
+            for (int i = 0; i < tournamentSize; i++)
+            {
+                var randomIndex = _random.Next(_population.Count);
+                tournament.Add(_population[randomIndex]);
+            }
+            
+            return tournament.OrderBy(r => r.TotalDistance).First();
+        }
+
+        public Route GetBestRoute()
+        {
+            return _population.OrderBy(r => r.TotalDistance).First();
+        }
+
+        public double GetAverageDistance()
+        {
+            return _population.Average(r => r.TotalDistance);
+        }
+
+        /// <summary>
+        /// Runs the specified number of generations.
+        /// </summary>
+        /// <param name="generations">Number of generations to evolve.</param>
+        /// <param name="onProgress">
+        /// Optional callback invoked after every generation.
+        /// Arguments are (currentGeneration, bestDistance).
+        /// </param>
+        public void RunGenerations(int generations, Action<int, double>? onProgress = null)
+        {
+            for (int gen = 0; gen < generations; gen++)
+            {
+                Evolve();
+
+                var bestDistance = GetBestRoute().TotalDistance;
+
+                // Record convergence history checkpoint every 5 generations.
+                if (gen % 5 == 0 || gen == generations - 1)
+                    _convergenceHistory.Add(bestDistance);
+
+                onProgress?.Invoke(gen, bestDistance);
+
+                // Process migration if needed
+                if (_enableMigration && _migrationManager != null && _migrationManager.ShouldMigrate(gen))
+                    ProcessMigration();
+
+                // Early-stop when improvement has stalled (configurable, 0 = disabled).
+                if (_options.ConvergenceThreshold > 0 && IsConverged(_options.ConvergenceThreshold))
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Returns true when improvement over the last 20 convergence checkpoints
+        /// (≈100 generations) falls below <paramref name="threshold"/> * current best.
+        /// Requires at least 20 checkpoints to avoid premature termination on short runs.
+        /// </summary>
+        private bool IsConverged(double threshold)
+        {
+            // 20 checkpoints × 5 generations each = 100 generations minimum observation window.
+            if (_convergenceHistory.Count < 20) return false;
+
+            var recent      = _convergenceHistory.TakeLast(20).ToList();
+            var improvement = recent.First() - recent.Last(); // positive = getting better
+            return improvement < recent.First() * threshold;
+        }
+
+        public List<double> GetConvergenceHistory()
+        {
+            return new List<double>(_convergenceHistory);
+        }
+
+        public void Optimize()
+        {
+            Initialize();
+            RunGenerations(_options.Generations);
+        }
+
+        public Route GetOptimizedRoute()
+        {
+            Optimize();
+            return GetBestRoute();
+        }
+
+        /// <summary>
+        /// Processes individual migration.
+        /// </summary>
+        private void ProcessMigration()
+        {
+            if (_migrationManager == null || _population == null || _population.Count == 0) return;
+            
+            try
+            {
+                // Select individuals for migration
+                var migrants = _migrationManager.SelectIndividualsForMigration(_population);
+                if (migrants.Count == 0) return;
+
+                // Add them to migration queue
+                foreach (var migrant in migrants)
+                {
+                    if (migrant != null)
+                    {
+                        _migrationManager.AddToMigration(migrant);
+                    }
+                }
+                
+                // Get migrants from other workers
+                var incomingMigrants = new List<Route>();
+                while (_migrationManager.TryGetFromMigration(out var incomingMigrant))
+                {
+                    if (incomingMigrant != null)
+                    {
+                        incomingMigrants.Add(incomingMigrant);
+                    }
+                }
+                
+                // Perform migration
+                if (incomingMigrants.Count > 0)
+                {
+                    _migrationManager.PerformMigration(_population, incomingMigrants);
+                }
+            }
+            catch (Exception ex)
+            {
+                // Log error but don't stop execution
+                System.Diagnostics.Debug.WriteLine($"Migration processing error: {ex.Message}");
+            }
+        }
+        
+        /// <summary>
+        /// Gets the migration manager.
+        /// </summary>
+        public MigrationManager? GetMigrationManager()
+        {
+            return _migrationManager;
+        }
+        
+        /// <summary>
+        /// Adds an individual to migration.
+        /// </summary>
+        public void AddToMigration(Route route)
+        {
+            _migrationManager?.AddToMigration(route);
+        }
+        
+        /// <summary>
+        /// Gets an individual from migration.
+        /// </summary>
+        public bool TryGetFromMigration(out Route? route)
+        {
+            if (_migrationManager != null)
+            {
+                return _migrationManager.TryGetFromMigration(out route);
+            }
+            
+            route = null;
+            return false;
+        }
+
+        /// <summary>
+        /// Gets the current population.
+        /// </summary>
+        public List<Route>? GetPopulation()
+        {
+            return _population;
+        }
+    }
+} 

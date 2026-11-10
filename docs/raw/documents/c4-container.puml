@@ -1,0 +1,40 @@
+@startuml C4-Container-PARCS-NET-K8
+
+left to right direction
+
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+!define DEVICONS https://raw.githubusercontent.com/tupadr3/plantuml-icon-font-sprites/master/devicons2
+!define FONTAWESOME https://raw.githubusercontent.com/tupadr3/plantuml-icon-font-sprites/master/font-awesome-5
+!include DEVICONS/dotnetcore.puml
+!include DEVICONS/javascript.puml
+!include DEVICONS/postgresql.puml
+!include FONTAWESOME/users.puml
+
+LAYOUT_WITH_LEGEND()
+
+Person(user, "User", "Software engineer in parallel computing", $sprite="users")
+System_Boundary(c2, "PARCS Execution Environment", $link="https://github.com/plantuml-stdlib/C4-PlantUML") {
+    Container(portal, "Management Portal", "ASP.NET Core Blazor", "Provides graphical interface for working with AM and tasks.", $sprite="javascript")
+    Container(messageBroker, "Message Broker", "Azure Service Bus", "Handles asynchronous messaging between components.")
+    Container(host, "Host", "ASP.NET Core Web API", "Directly controls AM creation and task orchestration.", $sprite="dotnetcore")
+    ContainerDb(hostDb, "Host Database", "PostgreSQL", "Stores data about tasks and modules.", $sprite="postgresql")
+    Container(daemon, "Daemon", ".NET Core Generic Host", "Performs main computations.", $sprite="dotnetcore")
+    ContainerDb(storage, "Storage", "Persistent Volume", "Stores binary AMs, input and output task files.")
+}
+System_Ext(library, "Parcs.Net", "NuGet", "Class library for AM implementation.", $sprite="dotnetcore")
+
+Rel(user, portal, "Interacts with graphical interface", "HTTPS")
+Rel(user, library, "References the API")
+Rel(portal, messageBroker, "Publishes messages", "AMQP")
+Rel(messageBroker, host, "Delivers messages", "AMQP")
+Rel(host, messageBroker, "Publishes messages", "AMQP")
+Rel(messageBroker, daemon, "Delivers messages", "AMQP")
+Rel(daemon, messageBroker, "Publishes messages", "AMQP")
+Rel(host, hostDb, "Writes and reads data", "EF Core")
+Rel(host, storage, "Writes and reads data")
+Rel(host, library, "References the API")
+Rel(daemon, library, "References the API")
+Rel(daemon, storage, "Reads data")
+
+@enduml

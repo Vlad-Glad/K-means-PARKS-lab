@@ -1,0 +1,34 @@
+﻿@inject IJSRuntime JsRuntime
+@inject NavigationManager navManager
+
+<div class="sidebar" id="sidebar">
+    <div class="sidebar-inner slimscroll">
+        <div id="sidebar-menu" class="sidebar-menu">
+            <ul>
+                <li class="menu-title">Main</li>
+                <li class="@modulesClass">
+                    <a href="/modules" @onclick="async () => await CloseSidebarAsync()"><i class="fa fa-dashboard"></i> <span>Modules</span></a>
+                </li>
+                <li class="@jobsClass">
+                    <a href="/jobs" @onclick="async () => await CloseSidebarAsync()"><i class="fa fa-book"></i> <span>Jobs</span></a>
+                </li>
+                <li class="@infoClass">
+                    <a href="/info" @onclick="async () => await CloseSidebarAsync()"><i class="fa fa-info-circle"></i> <span>Info</span></a>
+                </li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string currentUri => navManager.ToBaseRelativePath(navManager.Uri);
+
+    private string modulesClass => currentUri.Contains("module") || string.IsNullOrWhiteSpace(currentUri) ? "active" : string.Empty;
+    private string jobsClass => currentUri.Contains("job") ? "active" : string.Empty;
+    private string infoClass => currentUri.Contains("info") ? "active" : string.Empty;
+
+    private async Task CloseSidebarAsync()
+    {
+        await JsRuntime.InvokeVoidAsync(JSExtensionMethods.CloseSidebar);
+    }
+}

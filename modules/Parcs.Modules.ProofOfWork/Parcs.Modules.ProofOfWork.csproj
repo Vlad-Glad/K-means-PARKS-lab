@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <!-- ProofOfWork's GPU variant is out of scope for this pass and doesn't currently compile
+       (it references ModuleOptions/ModuleOutput/IChannel members that don't exist on this
+       branch) — excluded rather than left to break the solution build. ILGPU package refs stay
+       so the exclusion is easy to reverse later without touching project references. -->
+  <ItemGroup>
+    <Compile Remove="Gpu\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+	  <PackageReference Include="Parcs.Net" Version="10.1.0">
+		  <ExcludeAssets>runtime</ExcludeAssets>
+	  </PackageReference>
+	  <!-- ILGPU: cross-platform .NET GPU computing library.
+	       Compiles C# kernel methods to CUDA PTX (or OpenCL/CPU) at runtime via JIT. -->
+	  <PackageReference Include="ILGPU" Version="1.5.1" />
+	  <PackageReference Include="ILGPU.Algorithms" Version="1.5.1" />
+  </ItemGroup>
+
+</Project>
