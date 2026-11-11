@@ -26,8 +26,10 @@ namespace Parcs.Modules.KMeansSegmentation.Parallel
             int p = options.PointsNumber;
             int totalPixels = image.TotalPixels;
             options.Validate(totalPixels, useWorkers: true);
+
             var points = new IPoint[p];
             var channels = new IChannel[p];
+
             var startPixels = new int[p];
             var chunkCounts = new int[p];
 
@@ -63,7 +65,9 @@ namespace Parcs.Modules.KMeansSegmentation.Parallel
                     {
                         int startPx = startPixels[workerIdx];
                         int countPx = chunkCounts[workerIdx];
+
                         var chunkRgb = new byte[countPx * 3];
+
                         Buffer.BlockCopy(image.RgbBytes, startPx * 3, chunkRgb, 0, chunkRgb.Length);
 
                         var ch = channels[workerIdx];
@@ -118,6 +122,7 @@ namespace Parcs.Modules.KMeansSegmentation.Parallel
                 }
 
                 var labelTasks = new Task<byte[]>[p];
+
                 for (int w = 0; w < p; w++)
                 {
                     int workerIdx = w;
@@ -130,7 +135,9 @@ namespace Parcs.Modules.KMeansSegmentation.Parallel
                 }
 
                 var workerLabels = await Task.WhenAll(labelTasks);
+
                 var fullLabels = new byte[totalPixels];
+
                 for (int w = 0; w < p; w++)
                 {
                     Buffer.BlockCopy(workerLabels[w], 0, fullLabels, startPixels[w], chunkCounts[w]);

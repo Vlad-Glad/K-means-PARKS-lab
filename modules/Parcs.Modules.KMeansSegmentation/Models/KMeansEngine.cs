@@ -142,6 +142,7 @@ namespace Parcs.Modules.KMeansSegmentation.Models
                     double dr = r - cR[c];
                     double dg = g - cG[c];
                     double db = b - cB[c];
+
                     double distSq = dr * dr + dg * dg + db * db;
 
                     if (useSpatialFeatures)
