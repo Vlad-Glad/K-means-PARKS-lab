@@ -2,7 +2,6 @@
 
 # This stage is used when running from VS in fast mode (Default for Debug configuration)
 FROM mcr.microsoft.com/dotnet/runtime:10.0 AS base
-USER app
 WORKDIR /app
 
 
@@ -10,6 +9,8 @@ WORKDIR /app
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
+COPY ["nuget.config", "./"]
+COPY ["local-nuget/", "local-nuget/"]
 COPY ["src/Parcs.Daemon/Parcs.Daemon.csproj", "src/Parcs.Daemon/"]
 COPY ["src/Parcs.Core/Parcs.Core.csproj", "src/Parcs.Core/"]
 RUN dotnet restore "./src/Parcs.Daemon/Parcs.Daemon.csproj"

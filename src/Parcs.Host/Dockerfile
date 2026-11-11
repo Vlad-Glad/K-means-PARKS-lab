@@ -8,6 +8,8 @@ EXPOSE 443
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
+COPY ["nuget.config", "./"]
+COPY ["local-nuget/", "local-nuget/"]
 COPY ["src/Parcs.Host/Parcs.Host.csproj", "src/Parcs.Host/"]
 COPY ["src/Parcs.Core/Parcs.Core.csproj", "src/Parcs.Core/"]
 COPY ["src/Parcs.Data/Parcs.Data.csproj", "src/Parcs.Data/"]

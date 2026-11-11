@@ -1,0 +1,24 @@
+# Docker Compose for each Worker VM (Worker VMs #1..#8: 10.0.1.11 .. 10.0.1.18)
+# Uses network_mode: host so TCP port 1111 is bound directly to the EC2 network interface
+# without Docker bridge NAT latency.
+
+services:
+  parcs.daemon:
+    image: parcs/parcsdaemon:latest
+    build:
+      context: ../..
+      dockerfile: src/Parcs.Daemon/Dockerfile
+    container_name: parcs-daemon
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - /var/lib/storage:/var/lib/storage
+    environment:
+      - Hosting__Environment=Any
+      - Scaling__Mode=Static
+      - PointQueue__Provider=None
+      - Node__Port=1111
+      - FileSystem__BasePath=/var/lib/storage
+      - HostApi__Uri=${MASTER_IP:-10.0.1.10}:5000
+      - Elasticsearch__BaseUrl=
+      - HostTcp__AdvertisedAddress=${WORKER_IP:-127.0.0.1}

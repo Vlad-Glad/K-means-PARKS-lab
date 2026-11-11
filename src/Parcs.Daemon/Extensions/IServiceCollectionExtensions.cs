@@ -68,7 +68,13 @@ namespace Parcs.Daemon.Extensions
 
             services.AddHttpClient<IHostApiClient, HostApiClient>(client =>
             {
-                client.BaseAddress = new Uri($"http://{hostApiConfiguration.Uri}:80");
+                var rawUri = hostApiConfiguration?.Uri ?? "localhost";
+                if (!rawUri.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+                    !rawUri.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                {
+                    rawUri = rawUri.Contains(':') ? $"http://{rawUri}" : $"http://{rawUri}:80";
+                }
+                client.BaseAddress = new Uri(rawUri);
             });
 
             return services;

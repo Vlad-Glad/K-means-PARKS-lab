@@ -30,8 +30,12 @@ namespace Parcs.Portal.Extensions
                 .GetSection(ElasticsearchConfiguration.SectionName)
                 .Get<ElasticsearchConfiguration>();
 
-            services.AddHealthChecks()
-                .AddElasticsearch(elasticsearchConfiguration.BaseUrl, "elasticsearch");
+            var healthChecks = services.AddHealthChecks();
+            if (!string.IsNullOrWhiteSpace(elasticsearchConfiguration?.BaseUrl) &&
+                Uri.TryCreate(elasticsearchConfiguration.BaseUrl, UriKind.Absolute, out _))
+            {
+                healthChecks.AddElasticsearch(elasticsearchConfiguration.BaseUrl, "elasticsearch");
+            }
 
             return services;
         }
@@ -48,7 +52,13 @@ namespace Parcs.Portal.Extensions
 
             services.AddHttpClient<IHostClient, HostClient>(client =>
             {
-                client.BaseAddress = new Uri($"http://{hostConfiguration.Uri}:80");
+                var rawUri = hostConfiguration?.Uri ?? "localhost";
+                if (!rawUri.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+                    !rawUri.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                {
+                    rawUri = rawUri.Contains(':') ? $"http://{rawUri}" : $"http://{rawUri}:80";
+                }
+                client.BaseAddress = new Uri(rawUri);
             })
             .AddPolicyHandler(retryPolicy);
 

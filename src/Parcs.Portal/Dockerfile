@@ -11,6 +11,8 @@ EXPOSE 8081
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
+COPY ["nuget.config", "./"]
+COPY ["local-nuget/", "local-nuget/"]
 COPY ["src/Parcs.Portal/Parcs.Portal.csproj", "src/Parcs.Portal/"]
 COPY ["src/Parcs.Core/Parcs.Core.csproj", "src/Parcs.Core/"]
 RUN dotnet restore "./src/Parcs.Portal/Parcs.Portal.csproj"

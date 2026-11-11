@@ -16,15 +16,21 @@ namespace Parcs.Daemon.Extensions
                 .GetSection(ElasticsearchConfiguration.SectionName)
                 .Get<ElasticsearchConfiguration>();
 
-            loggingBuilder.AddSerilog(new LoggerConfiguration()
-                .WriteTo.Elasticsearch([new Uri(elasticsearchConfiguration.BaseUrl)], opts =>
+            var loggerConfig = new LoggerConfiguration()
+                .ReadFrom.Configuration(configuration)
+                .Enrich.FromLogContext();
+
+            if (!string.IsNullOrWhiteSpace(elasticsearchConfiguration?.BaseUrl) &&
+                Uri.TryCreate(elasticsearchConfiguration.BaseUrl, UriKind.Absolute, out var esUri))
+            {
+                loggerConfig.WriteTo.Elasticsearch([esUri], opts =>
                 {
                     opts.DataStream = new DataStreamName("parcs-daemon");
-                    opts.BootstrapMethod = BootstrapMethod.Failure;
-                })
-                .ReadFrom.Configuration(configuration)
-                .Enrich.FromLogContext()
-                .CreateLogger());
+                    opts.BootstrapMethod = BootstrapMethod.Silent;
+                });
+            }
+
+            loggingBuilder.AddSerilog(loggerConfig.CreateLogger());
         }
     }
 }

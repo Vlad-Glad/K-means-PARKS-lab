@@ -1,0 +1,152 @@
+# Local Docker Compose for testing Sequential and Parallel (1..8 points) K-Means on a single PC
+# Usage:
+#   cd infra/aws-ec2-static
+#   docker compose -f docker-compose.local.yml up -d --build
+
+services:
+  parcs.database:
+    image: postgres:17-alpine
+    container_name: parcs-local-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=parcs_admin
+      - POSTGRES_PASSWORD=ParcsLocalLab2026!
+      - POSTGRES_DB=parcs
+    volumes:
+      - parcs_local_db:/var/lib/postgresql/data
+      - ../../src/create-db.sql:/docker-entrypoint-initdb.d/database-init.sql
+    networks:
+      - parcsnet
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U parcs_admin -d parcs"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  parcs.hostapi:
+    image: parcs/parcshost:local
+    build:
+      context: ../..
+      dockerfile: src/Parcs.Host/Dockerfile
+    container_name: parcs-local-hostapi
+    restart: unless-stopped
+    depends_on:
+      parcs.database:
+        condition: service_healthy
+    ports:
+      - "5000:80"
+      - "2222:2222"
+    volumes:
+      - parcs_local_storage:/var/lib/storage
+    networks:
+      - parcsnet
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:80
+      - Hosting__Environment=Any
+      - Scaling__Mode=Static
+      - PointQueue__Provider=None
+      - FileSystem__BasePath=/var/lib/storage
+      - Database__HostName=parcs.database
+      - Database__Port=5432
+      - Database__DatabaseName=parcs
+      - Database__Username=parcs_admin
+      - Database__Password=ParcsLocalLab2026!
+      - Elasticsearch__BaseUrl=
+      - HostTcp__Port=2222
+      - HostTcp__AdvertisedAddress=parcs.hostapi
+      - Daemons__PreconfiguredInstances__0__HostUrl=parcs.daemon.1
+      - Daemons__PreconfiguredInstances__0__Port=1111
+      - Daemons__PreconfiguredInstances__1__HostUrl=parcs.daemon.2
+      - Daemons__PreconfiguredInstances__1__Port=1111
+      - Daemons__PreconfiguredInstances__2__HostUrl=parcs.daemon.3
+      - Daemons__PreconfiguredInstances__2__Port=1111
+      - Daemons__PreconfiguredInstances__3__HostUrl=parcs.daemon.4
+      - Daemons__PreconfiguredInstances__3__Port=1111
+      - Daemons__PreconfiguredInstances__4__HostUrl=parcs.daemon.5
+      - Daemons__PreconfiguredInstances__4__Port=1111
+      - Daemons__PreconfiguredInstances__5__HostUrl=parcs.daemon.6
+      - Daemons__PreconfiguredInstances__5__Port=1111
+      - Daemons__PreconfiguredInstances__6__HostUrl=parcs.daemon.7
+      - Daemons__PreconfiguredInstances__6__Port=1111
+      - Daemons__PreconfiguredInstances__7__HostUrl=parcs.daemon.8
+      - Daemons__PreconfiguredInstances__7__Port=1111
+
+  parcs.portal:
+    image: parcs/parcsportal:local
+    build:
+      context: ../..
+      dockerfile: src/Parcs.Portal/Dockerfile
+    container_name: parcs-local-portal
+    restart: unless-stopped
+    depends_on:
+      - parcs.hostapi
+    ports:
+      - "8080:80"
+    networks:
+      - parcsnet
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:80
+      - Host__Uri=parcs.hostapi
+      - Portal__Uri=localhost:8080
+      - Portal__SignalrUri=parcs.portal
+      - Elasticsearch__BaseUrl=
+
+  parcs.daemon.1: &daemon-template
+    image: parcs/parcsdaemon:local
+    build:
+      context: ../..
+      dockerfile: src/Parcs.Daemon/Dockerfile
+    container_name: parcs-local-daemon-1
+    restart: unless-stopped
+    depends_on:
+      - parcs.hostapi
+    volumes:
+      - parcs_local_storage:/var/lib/storage
+    networks:
+      - parcsnet
+    environment:
+      - Hosting__Environment=Any
+      - Scaling__Mode=Static
+      - PointQueue__Provider=None
+      - Node__Port=1111
+      - FileSystem__BasePath=/var/lib/storage
+      - HostApi__Uri=parcs.hostapi:80
+      - Elasticsearch__BaseUrl=
+
+  parcs.daemon.2:
+    <<: *daemon-template
+    container_name: parcs-local-daemon-2
+
+  parcs.daemon.3:
+    <<: *daemon-template
+    container_name: parcs-local-daemon-3
+
+  parcs.daemon.4:
+    <<: *daemon-template
+    container_name: parcs-local-daemon-4
+
+  parcs.daemon.5:
+    <<: *daemon-template
+    container_name: parcs-local-daemon-5
+
+  parcs.daemon.6:
+    <<: *daemon-template
+    container_name: parcs-local-daemon-6
+
+  parcs.daemon.7:
+    <<: *daemon-template
+    container_name: parcs-local-daemon-7
+
+  parcs.daemon.8:
+    <<: *daemon-template
+    container_name: parcs-local-daemon-8
+
+volumes:
+  parcs_local_db:
+  parcs_local_storage:
+
+networks:
+  parcsnet:
+    driver: bridge

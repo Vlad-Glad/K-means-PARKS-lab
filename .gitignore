@@ -194,6 +194,7 @@ PublishScripts/
 
 # NuGet Packages
 *.nupkg
+!local-nuget/*.nupkg
 # NuGet Symbol Packages
 *.snupkg
 # The packages folder can be ignored because of Package Restore
@@ -386,6 +387,10 @@ FodyWeavers.xsd
 
 # Office lock files
 ~$*
+
+# Local test and benchmark outputs
+local-results/
+infra/aws-ec2-static/benchmark-results/
 
 # Local development settings
 AGENTS.md

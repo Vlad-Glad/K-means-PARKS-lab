@@ -14,13 +14,20 @@ namespace Parcs.Portal.Extensions
                 .GetSection(ElasticsearchConfiguration.SectionName)
                 .Get<ElasticsearchConfiguration>();
 
-            hostBuilder.UseSerilog((hostContext, logging) => logging
-                .WriteTo.Elasticsearch([new Uri(elasticsearchConfiguration.BaseUrl)], options =>
+            hostBuilder.UseSerilog((hostContext, logging) =>
+            {
+                if (!string.IsNullOrWhiteSpace(elasticsearchConfiguration?.BaseUrl) &&
+                    Uri.TryCreate(elasticsearchConfiguration.BaseUrl, UriKind.Absolute, out var esUri))
                 {
-                    options.DataStream = new DataStreamName("parcs-portal");
-                    options.BootstrapMethod = BootstrapMethod.Failure;
-                })
-                .ReadFrom.Configuration(hostContext.Configuration));
+                    logging.WriteTo.Elasticsearch([esUri], options =>
+                    {
+                        options.DataStream = new DataStreamName("parcs-portal");
+                        options.BootstrapMethod = BootstrapMethod.Silent;
+                    });
+                }
+
+                logging.ReadFrom.Configuration(hostContext.Configuration);
+            });
         }
     }
 }
